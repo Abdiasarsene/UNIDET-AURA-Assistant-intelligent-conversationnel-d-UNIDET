@@ -1,9 +1,12 @@
-# api/chat.py
+
+import asyncio
 import json
 import logging
 from collections.abc import Iterator
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+
 from services.retrieval import retrieve_context
 from services.faq_retrieval import retrieve_faq_context
 from services.llm import generate_answer_stream
@@ -26,7 +29,8 @@ def sse_event(event: str, data: dict) -> str:
 
 
 @router.post("/chat")
-def chat(request: ChatRequest) -> StreamingResponse:
+async def chat(request: ChatRequest) -> StreamingResponse:
+
     # 1. Contrôle du périmètre avant tout appel externe.
     if is_obviously_out_of_scope(request.question):
 
@@ -47,10 +51,19 @@ def chat(request: ChatRequest) -> StreamingResponse:
             },
         )
 
-    # 2. Recherche documentaire uniquement si nécessaire.
+    # 2. Recherche documentaire et FAQ en parallèle.
     try:
-        chunks = retrieve_context(request.question)
-        faq_context = retrieve_faq_context(request.question)
+        chunks, faq_context = await asyncio.gather(
+            asyncio.to_thread(
+                retrieve_context,
+                request.question,
+            ),
+            asyncio.to_thread(
+                retrieve_faq_context,
+                request.question,
+            ),
+        )
+
     except Exception:
         logger.exception(
             "Échec de la recherche documentaire ou de la récupération FAQ."
@@ -73,6 +86,7 @@ def chat(request: ChatRequest) -> StreamingResponse:
             continue
 
         seen_sources.add(key)
+
         sources.append({
             "title": title,
             "url": url,
@@ -94,6 +108,7 @@ def chat(request: ChatRequest) -> StreamingResponse:
 
         except Exception:
             logger.exception("Échec du streaming de la réponse.")
+
             yield sse_event(
                 "error",
                 {

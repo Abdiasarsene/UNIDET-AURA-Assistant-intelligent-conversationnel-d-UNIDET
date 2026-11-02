@@ -1,7 +1,7 @@
 
-# services/llm.py
 import json
 import logging
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterator
 
@@ -18,6 +18,7 @@ openai_client = OpenAI(
 )
 
 PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
+
 ALLOWED_PROMPTS = {
     "fiche-identite.txt",
     "official-link.txt",
@@ -39,8 +40,10 @@ GENERATION_ERROR_ANSWER = (
 )
 
 
+@lru_cache(maxsize=len(ALLOWED_PROMPTS))
 def load_prompt(filename: str) -> str:
-    """Charge un prompt autorisé depuis le dossier prompts/."""
+    """Charge et conserve en mémoire un prompt autorisé."""
+
     if filename not in ALLOWED_PROMPTS:
         raise ValueError(f"Fichier de prompt non autorisé : {filename}")
 
@@ -48,6 +51,7 @@ def load_prompt(filename: str) -> str:
 
     try:
         prompt = prompt_path.read_text(encoding="utf-8").strip()
+
     except OSError as exc:
         logger.error(
             "Impossible de lire le prompt %s : %s",
@@ -63,8 +67,10 @@ def load_prompt(filename: str) -> str:
 
     return prompt
 
+
 def validate_prompt_resources() -> None:
-    """Vérifie que toutes les ressources obligatoires existent et sont lisibles."""
+    """Vérifie les ressources obligatoires au démarrage."""
+
     for filename in REQUIRED_PROMPTS:
         load_prompt(filename)
 
@@ -73,11 +79,15 @@ def validate_prompt_resources() -> None:
         len(REQUIRED_PROMPTS),
     )
 
-# Échec du démarrage si une ressource obligatoire est absente ou vide.
+
+# Vérification au démarrage.
 validate_prompt_resources()
 
+
+@lru_cache(maxsize=2)
 def build_instructions(task_prompt: str) -> str:
-    """Combine les instructions système et celles de la tâche."""
+    """Combine et conserve les instructions système et métier."""
+
     return (
         f"{load_prompt('system_prompt.txt')}\n\n"
         f"{load_prompt(task_prompt)}"
@@ -88,6 +98,7 @@ def _format_vector_context(
     chunks: list[dict],
 ) -> list[dict[str, str | None]]:
     """Normalise les passages issus de la recherche vectorielle."""
+
     formatted_chunks = []
 
     for chunk in chunks or []:
@@ -96,13 +107,11 @@ def _format_vector_context(
         if not isinstance(content, str) or not content.strip():
             continue
 
-        formatted_chunks.append(
-            {
-                "titre": chunk.get("title") or "Document UNIDET",
-                "url": chunk.get("url"),
-                "contenu": content.strip(),
-            }
-        )
+        formatted_chunks.append({
+            "titre": chunk.get("title") or "Document UNIDET",
+            "url": chunk.get("url"),
+            "contenu": content.strip(),
+        })
 
     return formatted_chunks
 
@@ -112,42 +121,40 @@ def generate_answer_stream(
     chunks: list[dict],
     web_context: str = "",
     faq_context: str = "",
-    identity_context:str ="",
+    identity_context: str = "",
     official_links_context: str = "",
-    
 ) -> Iterator[str]:
-    """Génère une réponse en streaming à partir des sources disponibles."""
+    """Génère une réponse progressive à partir des sources disponibles."""
+
     question = (question or "").strip()
-    identity_context = load_prompt("fiche-identite.txt")
-    official_links_context = load_prompt("official-link.txt")
 
     if not question:
         raise ValueError("La question ne peut pas être vide.")
+
+    # Ressources institutionnelles conservées en mémoire.
+    identity_context = load_prompt("fiche-identite.txt")
+    official_links_context = load_prompt("official-link.txt")
 
     vector_context = _format_vector_context(chunks)
     web_context = (web_context or "").strip()
     faq_context = (faq_context or "").strip()
 
-    if (
-    not vector_context
-    and not web_context
-    and not faq_context
-    ):
+    if not vector_context and not web_context and not faq_context:
         yield FALLBACK_ANSWER
         return
 
     user_message = (
-    f"QUESTION DU VISITEUR :\n{question}\n\n"
-    "IDENTITÉ INSTITUTIONNELLE UNIDET :\n"
-    f"{identity_context}\n\n"
-    "LIENS OFFICIELS UNIDET :\n"
-    f"{official_links_context}\n\n"
-    "CONTEXTE DOCUMENTAIRE UNIDET — RECHERCHE VECTORIELLE :\n"
-    f"{json.dumps(vector_context, ensure_ascii=False)}\n\n"
-    "CONTEXTE WEB — RECHERCHE LIMITÉE À unidet.fr :\n"
-    f"{web_context or 'Aucun résultat web exploitable.'}\n\n"
-    "CONTEXTE FAQ UNIDET — FICHIER LOCAL :\n"
-    f"{faq_context or 'Aucun résultat FAQ exploitable.'}\n"
+        f"QUESTION DU VISITEUR :\n{question}\n\n"
+        "IDENTITÉ INSTITUTIONNELLE UNIDET :\n"
+        f"{identity_context}\n\n"
+        "LIENS OFFICIELS UNIDET :\n"
+        f"{official_links_context}\n\n"
+        "CONTEXTE DOCUMENTAIRE UNIDET — RECHERCHE VECTORIELLE :\n"
+        f"{json.dumps(vector_context, ensure_ascii=False)}\n\n"
+        "CONTEXTE WEB — RECHERCHE LIMITÉE À unidet.fr :\n"
+        f"{web_context or 'Aucun résultat web exploitable.'}\n\n"
+        "CONTEXTE FAQ UNIDET — FICHIER LOCAL :\n"
+        f"{faq_context or 'Aucun résultat FAQ exploitable.'}\n"
     )
 
     try:
@@ -176,6 +183,7 @@ def generate_answer_stream(
             elif event_type == "response.incomplete":
                 completion_status = event.response.status
                 details = event.response.incomplete_details
+
                 incomplete_reason = (
                     details.reason if details else "inconnue"
                 )
@@ -226,6 +234,7 @@ def generate_summary(
     language: str | None = None,
 ) -> str:
     """Résume fidèlement un contenu dans la langue demandée."""
+
     content = (content or "").strip()
 
     if not content:

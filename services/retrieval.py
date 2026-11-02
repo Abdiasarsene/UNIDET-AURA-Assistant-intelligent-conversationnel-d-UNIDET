@@ -1,19 +1,20 @@
-# services/retrieval.py
+
+from functools import lru_cache
+
 from openai import OpenAI
+
 from db.database import search_similar_chunks
 from utils.config import settings
+
 
 openai_client = OpenAI(
     api_key=settings.openai_api_key.get_secret_value()
 )
 
 
-def embed_query(question: str) -> list[float]:
-    """Transforme une question en embedding OpenAI."""
-
-    question = question.strip()
-    if not question:
-        raise ValueError("La question ne peut pas être vide.")
+@lru_cache(maxsize=256)
+def _cached_embedding(question: str) -> tuple[float, ...]:
+    """Calcule et conserve temporairement l'embedding d'une question."""
 
     response = openai_client.embeddings.create(
         model=settings.openai_embed_model,
@@ -29,7 +30,19 @@ def embed_query(question: str) -> list[float]:
     if len(embedding) != settings.openai_embed_dimension:
         raise RuntimeError("La dimension de l'embedding est inattendue.")
 
-    return embedding
+    return tuple(embedding)
+
+
+def embed_query(question: str) -> list[float]:
+    """Transforme une question en embedding OpenAI."""
+
+    question = question.strip()
+
+    if not question:
+        raise ValueError("La question ne peut pas être vide.")
+
+    return list(_cached_embedding(question))
+
 
 def retrieve_context(question: str) -> list[dict]:
     """Retourne les passages pertinents pour une question."""
@@ -54,13 +67,11 @@ def retrieve_context(question: str) -> list[dict]:
 
         url = metadata.get("url") or metadata.get("source_url")
 
-        results.append(
-            {
-                "content": chunk["content"],
-                "title": title,
-                "url": url,
-                "similarity": float(chunk["similarity"]),
-            }
-        )
+        results.append({
+            "content": chunk["content"],
+            "title": title,
+            "url": url,
+            "similarity": float(chunk["similarity"]),
+        })
 
     return results
