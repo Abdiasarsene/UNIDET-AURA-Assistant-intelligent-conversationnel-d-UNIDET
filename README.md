@@ -36,7 +36,7 @@ Le projet repose sur une architecture composée de plusieurs éléments :
 ### Schéma de fonctionnement
 
 
-![Uploading Fonctionnement de l’API UNIDET AURA](./static/aura-unidet.png)
+![Uploading Fonctionnement de l’API UNIDET AURA](./statics/aura-unidet.png)
 
 
 ## 3. Fonctionnalités principales
